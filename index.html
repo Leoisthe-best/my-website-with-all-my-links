@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Edit Page</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #111;
+  }
+  #editBtn {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    padding: 8px 16px;
+    font-size: 14px;
+    background: #111;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    z-index: 10;
+  }
+  #editBtn:hover { background: #333; }
+  #editBtn:disabled { background: #888; cursor: wait; }
+  #canvas {
+    min-height: 100vh;
+    padding: 64px 24px 24px;
+    box-sizing: border-box;
+    outline: none;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  #canvas:empty::before {
+    content: "Click Edit, then start typing...";
+    color: #bbb;
+  }
+  #canvas a { color: #0066cc; text-decoration: underline; }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+  }
+  #overlay.show { display: flex; }
+  #modal {
+    background: #fff;
+    border-radius: 10px;
+    padding: 24px;
+    width: 320px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    text-align: center;
+  }
+  #modal h2 { margin: 0 0 12px; font-size: 18px; }
+  #modal input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    margin-bottom: 12px;
+  }
+  #modal .actions { display: flex; gap: 8px; justify-content: center; }
+  #modal button {
+    padding: 8px 14px;
+    font-size: 14px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  #okBtn { background: #111; color: #fff; }
+  #cancelBtn { background: #eee; color: #111; }
+  #errorMsg {
+    color: #c00;
+    font-size: 13px;
+    min-height: 18px;
+    margin-bottom: 8px;
+  }
+  #status {
+    position: fixed;
+    bottom: 12px;
+    right: 16px;
+    font-size: 12px;
+    color: #888;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+  <button id="editBtn" disabled>Loading…</button>
+  <div id="canvas"></div>
+  <div id="status"></div>
+
+  <div id="overlay">
+    <div id="modal">
+      <h2>Enter passcode to edit</h2>
+      <div id="errorMsg"></div>
+      <input id="passInput" type="password" autocomplete="off" placeholder="passcode">
+      <div class="actions">
+        <button id="cancelBtn">Cancel</button>
+        <button id="okBtn">OK</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const btn = document.getElementById('editBtn');
+  const canvas = document.getElementById('canvas');
+  const overlay = document.getElementById('overlay');
+  const passInput = document.getElementById('passInput');
+  const okBtn = document.getElementById('okBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
+  const errorMsg = document.getElementById('errorMsg');
+  const statusEl = document.getElementById('status');
+
+  let editing = false;
+  let passcode = null; // remembered after successful unlock
+
+  const urlRegex = /\b((?:https?:\/\/|www\.)[^\s<]+|[a-zA-Z0-9-]+\.(?:com|org|net|io|dev|app|co|edu|gov|me|info|xyz|ai)(?:\/[^\s<]*)?)/gi;
+
+  function linkify(text) {
+    return text.replace(/&/g, '&amp;')
+               .replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;')
+               .replace(urlRegex, (match) => {
+                 let href = match;
+                 if (!/^https?:\/\//i.test(href)) href = 'https://' + href;
+                 return `<a href="${href}" target="_blank" rel="noopener">${match}</a>`;
+               });
+  }
+
+  function renderLinks() {
+    const text = canvas.innerText;
+    canvas.innerHTML = linkify(text);
+  }
+
+  async function loadContent() {
+    const res = await fetch('/api/content');
+    const data = await res.json();
+    canvas.textContent = data.content || '';
+    renderLinks();
+    btn.disabled = false;
+    btn.textContent = 'Edit';
+  }
+
+  async function saveContent() {
+    const content = canvas.innerText;
+    statusEl.textContent = 'Saving…';
+    const res = await fetch('/api/content', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passcode, content })
+    });
+    if (res.ok) {
+      statusEl.textContent = 'Saved';
+      setTimeout(() => { statusEl.textContent = ''; }, 2000);
+      return true;
+    } else {
+      statusEl.textContent = 'Save failed';
+      return false;
+    }
+  }
+
+  function startEditing() {
+    editing = true;
+    canvas.textContent = canvas.innerText;
+    canvas.contentEditable = 'true';
+    canvas.focus();
+    btn.textContent = 'Done';
+  }
+
+  async function stopEditing() {
+    editing = false;
+    canvas.contentEditable = 'false';
+    btn.disabled = true;
+    await saveContent();
+    renderLinks();
+    btn.textContent = 'Edit';
+    btn.disabled = false;
+  }
+
+  function openModal() {
+    errorMsg.textContent = '';
+    passInput.value = '';
+    overlay.classList.add('show');
+    setTimeout(() => passInput.focus(), 0);
+  }
+
+  function closeModal() {
+    overlay.classList.remove('show');
+  }
+
+  async function tryPasscode() {
+    const attempt = passInput.value;
+    // Verify by attempting a no-op save with current content
+    const res = await fetch('/api/content', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passcode: attempt, content: canvas.innerText })
+    });
+    if (res.ok) {
+      passcode = attempt;
+      closeModal();
+      startEditing();
+    } else {
+      errorMsg.textContent = 'Wrong passcode. You cannot edit.';
+      passInput.value = '';
+      passInput.focus();
+    }
+  }
+
+  okBtn.addEventListener('click', tryPasscode);
+  cancelBtn.addEventListener('click', closeModal);
+  passInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') tryPasscode();
+    if (e.key === 'Escape') closeModal();
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeModal();
+  });
+
+  btn.addEventListener('click', () => {
+    if (editing) {
+      stopEditing();
+    } else {
+      openModal();
+    }
+  });
+
+  canvas.addEventListener('click', (e) => {
+    if (editing && e.target.tagName === 'A' && !(e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+    }
+  });
+
+  loadContent();
+</script>
+</body>
+</html>
